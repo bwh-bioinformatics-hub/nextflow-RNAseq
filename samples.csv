@@ -1,0 +1,7 @@
+Sample_ID,Read1,Read2,Bam
+cel_N2_1,data/fastq/N2_rep1_1.fastq.gz,data/fastq/N2_rep1_2.fastq.gz,NA
+cel_N2_2,data/fastq/N2_rep2_1.fastq.gz,data/fastq/N2_rep2_2.fastq.gz,NA
+cel_N2_3,data/fastq/N2_rep3_1.fastq.gz,data/fastq/N2_rep3_2.fastq.gz,NA
+fust1_1,data/fastq/fust1_rep1_1.fastq.gz,data/fastq/fust1_rep1_2.fastq.gz,NA
+fust1_2,data/fastq/fust1_rep2_1.fastq.gz,data/fastq/fust1_rep2_2.fastq.gz,NA
+fust1_3,data/fastq/fust1_rep3_1.fastq.gz,data/fastq/fust1_rep3_2.fastq.gz,NA
