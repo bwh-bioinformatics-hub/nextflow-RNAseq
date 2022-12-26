@@ -1,5 +1,14 @@
 #!/usr/bin/env nextflow
 
+def json_schema = "$workflow.projectDir/nextflow_schema.json"
+
+if(params.phenotype){
+    pheno_file = file(params.phenotype)
+    ch_phenotype = examine_phenotype(pheno_file)
+} else {
+    ch_phenotype = Channel.empty()
+}
+
 if(params.trim_fastq){
     if(params.adapters){
     adapters = file(params.adapters, checkIfExists: true)
@@ -52,8 +61,6 @@ summary['User']               = workflow.userName
 
 summary['Input']              = params.input
 summary['Input type']         = params.input_type
-if('differential_expression' in module) summary['Phenotype file'] = params.phenotype
-summary['modules']            = params.module
 summary['BSJ filter']         = params.bsj_reads
 
 summary['Genome']             = params.genome
@@ -79,6 +86,22 @@ if (params.config_profile_contact)     summary['Config Profile Contact']     = p
 if (params.config_profile_url)         summary['Config Profile URL']         = params.config_profile_url
 summary['Config Files'] = workflow.configFiles.join(', ')
 
+Channel.from(summary.collect{ [it.key, it.value] })
+    .map { k,v -> "<dt>$k</dt><dd><samp>${v ?: '<span style=\"color:#999999;\">N/A</a>'}</samp></dd>" }
+    .reduce { a, b -> return [a, b].join("\n            ") }
+    .map { x -> """
+    id: 'nf-core-circrna-summary'
+    description: " - this information is collected when the pipeline is started."
+    section_name: 'nf-core/circrna Workflow Summary'
+    section_href: 'https://github.com/nf-core/circrna'
+    plot_type: 'html'
+    data: |
+        <dl class=\"dl-horizontal\">
+            $x
+        </dl>
+    """.stripIndent() }
+    .set { ch_workflow_summary }
+
 /*
 ================================================================================
                             Stage Parameters
@@ -93,7 +116,7 @@ params.species   = params.genome ? params.genomes[params.genome].species_id?: fa
 
 ch_fasta = params.fasta ? Channel.value(file(params.fasta)) : 'null'
 ch_gtf = params.gtf ? Channel.value(file(params.gtf)) : 'null'
-ch_mature = params.mature && 'mirna_prediction' in module ? Channel.value(file(params.mature)) : 'null'
+ch_mature = params.mature ? Channel.value(file(params.mature)) : 'null'
 ch_species = params.genome ? Channel.value(params.species) : 'null'
 
 /*
@@ -141,9 +164,6 @@ ch_star = params.star ? Channel.value(file(params.star)) : star_built
 process FILTER_GTF{
     tag"${gtf}"
 
-    when:
-    'circrna_discovery' in module
-
     input:
     file(gtf) from ch_gtf
 
@@ -162,7 +182,7 @@ process GENE_ANNOTATION{
         saveAs: { params.save_reference ? "reference_genome/${it}" : null }
 
     when:
-    params.gtf && 'circrna_discovery' in module
+    params.gtf
 
     input:
     file(gtf) from ch_gtf
@@ -253,7 +273,7 @@ process TRIM_GALORE {
     tuple val(base), file(fastq) from trimming_reads
 
     output:
-    tuple val(base), file('*.trim.fq.gz') into trim_reads_ch
+    tuple val(base), file('*.trim.fq.gz') into trim_reads_ch, trim_reads_ch_fastqc
     //file(*) into trim_results
 
     script:
@@ -302,7 +322,7 @@ process FASTQC_TRIMED {
     params.trim_fastq
 
     input:
-    tuple val(base), file(fastq) from fastqc_trim_reads
+    tuple val(base), file(fastq) from trim_reads_ch_fastqc
 
     output:
     file ("*.{html,zip}") into fastqc_trimmed
@@ -386,9 +406,6 @@ process CIRCEXPLORER2{
     publishDir params.outdir, mode: params.publish_dir_mode, pattern: "${base}",
         saveAs: { params.save_quantification_intermediates ? "circrna_discovery/CIRCexplorer2/${it}" : null }
 
-    when:
-    'circexplorer2' in tool && 'circrna_discovery' in module
-
     input:
     tuple val(base), file(chimeric_reads) from circexplorer2_input
     file(fasta) from ch_fasta
@@ -416,9 +433,6 @@ process CIRCEXPLORER2{
 
 process COUNT_MATRIX_SINGLE{
     publishDir "${params.outdir}/circrna_discovery", pattern: "count_matrix.txt", mode: params.publish_dir_mode
-
-    when:
-    'circrna_discovery' in module
 
     input:
     file(bed) from circexplorer2_results.collect()
@@ -453,9 +467,6 @@ process STRINGTIE{
     publishDir params.outdir, mode: params.publish_dir_mode, pattern: "${base}",
         saveAs: { params.save_rnaseq_intermediates ? "differential_expression/intermediates/StringTie/${it}" : null }
 
-    when:
-    'differential_expression' in module
-
     input:
     tuple val(base), file(bam) from star_bam
     file(gtf) from ch_gtf
@@ -477,9 +488,6 @@ process DEA{
     publishDir "${params.outdir}/quality_control", pattern: "DESeq2_QC", mode: params.publish_dir_mode
     publishDir params.outdir, mode: params.publish_dir_mode, pattern: "RNA-Seq",
         saveAs: { params.save_rnaseq_intermediates ? "differential_expression/intermediates/${it}" : null }
-
-    when:
-    'differential_expression' in module
 
     input:
     file(gtf_dir) from stringtie_dir.collect()
@@ -528,8 +536,7 @@ process MULTIQC{
     // file(trimgalore_stats) from trim_results.collect().ifEmpty([])
     file(multiqc_config) from ch_multiqc_config
     file(mqc_custom_config) from ch_multiqc_custom_config.collect().ifEmpty([])
-    file('software_versions/*') from software_versions_yaml.collect()
-    file workflow_summary from ch_workflow_summary.collectFile(name: "workflow_summary_mqc.yaml")
+    // file workflow_summary from ch_workflow_summary.collectFile(name: "workflow_summary_mqc.yaml")
 
     output:
     file("*.html") into multiqc_out
