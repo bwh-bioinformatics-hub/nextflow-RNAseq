@@ -1,1 +1,4 @@
-/data
+data/
+.nextflow*
+work/
+results/
