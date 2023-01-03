@@ -6,7 +6,7 @@ hld = defaultdict(list)
 samps = defaultdict(list)
 
 path = "./"
-files = [f for f in glob.glob("*.bed")]
+files = glob.glob("*.bed")
 
 for fi in files:
     name = fi.strip("./").split(".bed")[0]
@@ -21,7 +21,7 @@ for fi in files:
 
 
 def Diff(list1, list2):
-    return (list(list(set(list1)-set(list2)) + list(set(list2)-set(list1))))
+    return list(list(set(list1)-set(list2)) + list(set(list2)-set(list1)))
 
 tmp= [x.replace('.bed', '') for x in files]
 print("Chr\tStart\tStop\tStrand\t" + "\t".join([x for x in tmp]))

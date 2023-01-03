@@ -237,6 +237,8 @@ if(params.input_type == 'bam'){
     (fastqc_reads, trimming_reads, raw_reads) = fastq_input.into(3)
 }
 
+rmats_phenotype, dea_phenotype = ch_phenotype.into(2)
+
 process FASTQC_RAW {
     tag "${base}"
     label 'process_medium'
@@ -350,14 +352,13 @@ process STAR{
 
     output:
     tuple val(base), file("${base}/${base}.Chimeric.out.junction") into circexplorer2_input
-    tuple val(base), file("${base}/${base}.Aligned.sortedByCoord.out.bam") into star_bam
-    tuple val(base), file("${base}") into circrna_finder_input, dcc_pairs
+    tuple val(base), file("${base}/${base}.Aligned.sortedByCoord.out.bam") into star_bam_rmats, star_bam_stringtie
+    tuple val(base), file("${base}") into circrna_finder_input
 
     script:
     def readFilesCommand = reads[0].toString().endsWith('.gz') ? "--readFilesCommand zcat" : ''
     """
     mkdir -p ${base}
-
 
     STAR \\
         --twopassMode Basic \\
@@ -397,6 +398,31 @@ process STAR{
 
 /*
 ================================================================================
+                                rMATs Analysis
+================================================================================
+*/
+process RMATS_ANALYSIS{
+    tag "${base}"
+    label 'process_high'
+    publishDir "${params.outdir}/rMATS", mode: params.publish_dir_mode, pattern: "rmats-results*"
+    
+    // when:
+    // param.if_enable_rmats
+
+    input:
+    file(bam) from star_bam_rmats.collect()
+    file(phenotype) from rmats_phenotype
+    file(gtf) from ch_gtf
+
+    script:
+    """
+    python ${workflow.projectDir}/scripts/prepare_rmats_input.py ${phenotype}
+    python ${workflow.projectDir}/scripts/execute_rmats.py ${gtf} ${task.cpus}
+    """
+}
+
+/*
+================================================================================
                                 CircRNA Analysis
 ================================================================================
 */
@@ -412,7 +438,7 @@ process CIRCEXPLORER2{
     file(gene_annotation) from ch_gene
 
     output:
-    tuple val(base), file("${base}") into circexplorer2_intermediates
+    tuple val(base), val("CIRCexplorer2"), file("${base}") into circexplorer2_intermediates
     tuple val(base), file("${base}_circexplorer2.bed") into circexplorer2_results
     tuple val(base), val("CIRCexplorer2"), file("${base}_circexplorer2_circs.bed") into circexplorer2_annotated
 
@@ -468,7 +494,7 @@ process STRINGTIE{
         saveAs: { params.save_rnaseq_intermediates ? "differential_expression/intermediates/StringTie/${it}" : null }
 
     input:
-    tuple val(base), file(bam) from star_bam
+    tuple val(base), file(bam) from star_bam_stringtie
     file(gtf) from ch_gtf
 
     output:
@@ -481,25 +507,26 @@ process STRINGTIE{
     """
 }
 
+gene_type_mapping = file("${workflow.projectDir}/assets/my_gene_type.txt")
+
 process DEA{
     label 'process_medium'
+    publishDir "${params.outdir}/differential_expression", pattern: "RNA-Seq", mode: params.publish_dir_mode
     publishDir "${params.outdir}/differential_expression", pattern: "circRNA", mode: params.publish_dir_mode
     publishDir "${params.outdir}/differential_expression", pattern: "boxplots", mode: params.publish_dir_mode
+    publishDir "${params.outdir}/differential_expression", pattern: "combined_differential_expression.csv", mode: params.publish_dir_mode
     publishDir "${params.outdir}/quality_control", pattern: "DESeq2_QC", mode: params.publish_dir_mode
-    publishDir params.outdir, mode: params.publish_dir_mode, pattern: "RNA-Seq",
-        saveAs: { params.save_rnaseq_intermediates ? "differential_expression/intermediates/${it}" : null }
 
     input:
     file(gtf_dir) from stringtie_dir.collect()
     file(circ_matrix) from circRNA_counts
-    file(phenotype) from ch_phenotype
+    file(phenotype) from dea_phenotype
     val(species) from ch_species
+    file(circexplorer_results) from circexplorer2_intermediates.collect()
 
     output:
     file("RNA-Seq") into rnaseq_dir
-    file("circRNA") into circrna_dir
-    file("boxplots") into boxplots_dir
-    // file("DESeq2_QC") into qc_plots
+    // file("circRNA") into circrna_dir
 
     script:
     """
@@ -517,6 +544,31 @@ process DEA{
 
     mv gene_count_matrix.csv RNA-Seq
     mv transcript_count_matrix.csv RNA-Seq
+
+    ## webcrawler is disabaled in default
+    python ${workflow.projectDir}/scripts/combination.py ${gene_type_mapping} disable_webcrawler
+    """
+}
+
+/*
+================================================================================
+                            Pathway Enrichment
+================================================================================
+*/
+pathway_enrich_script = file("${workflow.projectDir}/scripts/pathway_enrich.R")
+process PATHWAY_ENRICHMENT{
+    tag "${base}"
+    label 'process_high'
+    publishDir "${params.outdir}/pathway_enrichment", pattern: "results", mode: params.publish_dir_mode
+
+    input:
+    file(rnaseq) from rnaseq_dir
+    
+
+    script:
+    """
+    python ${workflow.projectDir}/scripts/trans_DE2csv.py
+    python ${workflow.projectDir}/scripts/execute_pathway_enrichment.py
     """
 }
 
